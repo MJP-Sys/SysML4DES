@@ -10,8 +10,12 @@ Three independent computations of when each item starts processing:
 3. ``item_centred``    - a hand translation of the request / grant / release
                          protocol in models/02-item-centred (each item runs
                          its route; the server keeps a FIFO queue).
+4. ``event_graph``     - a hand translation of Schruben's event graph in
+                         models/03-event-graph (vertices change state and
+                         schedule their successors; each vertex, with the
+                         evaluation of its outgoing edge conditions, is atomic).
 
-2 and 3 are written by hand from the models; they are NOT generated from the
+2, 3 and 4 are written by hand from the models; they are NOT generated from the
 SysML files. They give the numbers any SysML v2 executor should reproduce
 when it runs those models. Times are in seconds, service time is constant.
 """
@@ -115,6 +119,52 @@ def item_centred(arrivals: list[float], service: float) -> list[float]:
     return [starts[i] for i in range(len(arrivals))]
 
 
+def event_graph(arrivals: list[float], service: float,
+                defer_zero_delay: bool = False) -> list[float]:
+    """Processing start times, following WorkstationEventGraph.sysml.
+
+    Arrivals are taken from the list instead of the Arrival -> Arrival
+    self-loop, so any arrival pattern can be checked. As in model 01 the
+    k-th start belongs to the k-th arrival.
+
+    Execution rule: an edge with no delay (no accept on it in the model)
+    completes in the same step as its source vertex, before any other event
+    at the same instant. ``defer_zero_delay=True`` breaks that rule on
+    purpose: the edge is queued behind other same-time events, and
+    simultaneous arrivals then start the server twice.
+    """
+    ev = _Events()
+    s = {"queue": 0, "busy": False}
+    starts: list[float] = []
+
+    def zero_delay(vertex) -> None:
+        if defer_zero_delay:
+            ev.at(ev.now, vertex)
+        else:
+            vertex()
+
+    def arrival() -> None:                     # vertex Arrival: Q := Q + 1
+        s["queue"] += 1
+        if not s["busy"]:                      # edge -> ProcessingStart [not busy]
+            zero_delay(processing_start)
+
+    def processing_start() -> None:            # vertex: Q := Q - 1; busy := true
+        s["queue"] -= 1
+        s["busy"] = True
+        starts.append(ev.now)
+        ev.at(ev.now + service, processing_end)  # edge -> ProcessingEnd, delay ts
+
+    def processing_end() -> None:              # vertex: busy := false
+        s["busy"] = False
+        if s["queue"] > 0:                     # edge -> ProcessingStart [Q > 0]
+            zero_delay(processing_start)
+
+    for a in arrivals:
+        ev.at(a, arrival)
+    ev.run()
+    return starts
+
+
 def waits_from_starts(arrivals: list[float], starts: list[float]) -> list[float]:
     return [s - a for a, s in zip(arrivals, starts)]
 
@@ -135,3 +185,4 @@ if __name__ == "__main__":
         print("  Lindley waits ", lindley(arrivals, 4.0))
         print("  station starts", station_centred(arrivals, 4.0))
         print("  item starts   ", item_centred(arrivals, 4.0))
+        print("  event graph   ", event_graph(arrivals, 4.0))
