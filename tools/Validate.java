@@ -27,7 +27,8 @@ public class Validate {
             System.err.println("usage: Validate <sysml.library> [--strict] [--expect-fail] files...");
             System.exit(2);
         }
-        String library = args[0];
+        // The pilot's loader needs an absolute path with a trailing separator.
+        String library = Path.of(args[0]).toAbsolutePath().normalize() + java.io.File.separator;
         boolean strict = false;
         boolean expectFail = false;
         List<String> files = new ArrayList<>();

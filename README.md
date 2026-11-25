@@ -56,8 +56,10 @@ part def WorkStation {
 ERROR: mismatched input 'if' expecting 'then'
 ```
 
-It is a grammar-level rejection, not a validation rule. The identical line
-inside an `action def` is accepted with no errors or warnings.
+It is a grammar-level rejection, not a validation rule. Only the guard is
+refused: the unguarded `first arrival then processingStart;` is accepted in
+the part, and the guarded line is accepted inside an `action def`, both with
+no errors or warnings.
 
 ## 2. Station-centred: a state machine the part exhibits
 
