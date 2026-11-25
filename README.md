@@ -23,9 +23,12 @@ This repository:
 1. reproduces the restriction on the OMG pilot implementation;
 2. writes the same workstation in standard SysML v2 in two ways that need no
    annotation;
-3. gives known answers (Lindley's recursion, Pollaczek–Khinchine) that both
-   formulations must reproduce;
-4. states what is still missing from the language.
+3. writes Wagner's event graph itself on the part, in a form the pilot
+   accepts today;
+4. gives known answers (Lindley's recursion, Pollaczek–Khinchine) that every
+   formulation must reproduce;
+5. proposes [a fix](#the-fix): the execution rules an executor needs, and a
+   small language change.
 
 ## Contents
 
@@ -35,8 +38,9 @@ This repository:
 | `models/00-restriction/ConditionalSuccessionInAction.sysml` | Control: the same guarded succession in an action. Accepted. |
 | `models/01-state-machine/SingleServerWorkstation.sysml` | Station-centred: the station's behaviour is a state machine the part exhibits. |
 | `models/02-item-centred/SingleServerWorkstationItemCentred.sysml` | Item-centred (Arena / SimPy view): each item performs a route; the server is a resource with a FIFO queue. |
-| `reference/known_answers.py` | Lindley's recursion and hand translations of both models. |
-| `tests/test_known_answers.py` | Both translations must match Lindley exactly, and the M/D/1 mean wait over a long run. |
+| `models/03-event-graph/WorkstationEventGraph.sysml` | Schruben's event graph declared on the part, inside an action the part performs. |
+| `reference/known_answers.py` | Lindley's recursion and hand translations of models 01–03. |
+| `tests/test_known_answers.py` | Every translation must match Lindley exactly, and the M/D/1 mean wait over a long run. |
 | `tools/` | Pilot download, strict validator, and the script CI runs. |
 
 ## 1. The restriction
@@ -56,7 +60,11 @@ part def WorkStation {
 ERROR: mismatched input 'if' expecting 'then'
 ```
 
-It is a grammar-level rejection, not a validation rule. Only the guard is
+It is a grammar-level rejection, not a validation rule, and it follows from
+the semantics: `first a if g then b` parses as a `GuardedSuccession`, which
+is a `TransitionUsage`. In the library a transition of that kind is a
+`TransitionAction`, held in `Actions::Action::transitions :> subactions`.
+Actions have that feature; parts do not. Only the guard is
 refused: the unguarded `first arrival then processingStart;` is accepted in
 the part, and the guarded line is accepted inside an `action def`, both with
 no errors or warnings.
@@ -78,8 +86,8 @@ The two regions (input buffer, server) run in parallel. The instance
 `singleWorkStationSystem` has an arrival every 5 s and a processing time of
 4 s.
 
-This is the operational form of the event graph, not the declarative one
-Wagner was after (see [the gap](#the-gap)).
+This is the operational form of the event graph. Model 03 keeps the
+event-graph form itself.
 
 ## 3. Item-centred: the route is an action, the server is a resource
 
@@ -105,15 +113,34 @@ This single-server route does not need one.
 The instance `itemCentredSystem` has four items arriving at 0, 1, 2 and 10 s,
 so a queue forms.
 
-## 4. Known answers
+## 4. The event graph on the part, in a performed action
 
-`reference/known_answers.py` computes processing start times three
+Model 03 keeps Wagner's event-graph view: the station owns its events, and
+the scheduling edges carry conditions. The graph sits in
+`perform action eventGraph { ... }` inside `part def WorkStation`, where
+guarded successions are legal.
+
+| Event graph | In `eventGraph` |
+|---|---|
+| Vertex with state change | an action, e.g. `action arrival assign queueLength := queueLength + 1` |
+| Edge with delay *t* | `accept after t` on the path |
+| Edge condition | `decide; if not busy then toStart; else serverBusy;` |
+| Vertex with several incoming edges | a `merge` node; cycles become control-flow loops |
+| Several outgoing edges | a `fork` |
+
+Loops through merge nodes are standard SysML v2 (see the training example
+`17. Control/Decision Example.sysml` in the pilot release).
+
+## 5. Known answers
+
+`reference/known_answers.py` computes processing start times four
 independent ways:
 
 - **Lindley's recursion** for a single FIFO server:
   W<sub>n+1</sub> = max(0, W<sub>n</sub> + S − (A<sub>n+1</sub> − A<sub>n</sub>));
 - a hand translation of the **state machine** (model 01);
-- a hand translation of the **request / grant / release** protocol (model 02).
+- a hand translation of the **request / grant / release** protocol (model 02);
+- a hand translation of the **event graph** (model 03).
 
 For the item-centred instance (service time 4 s):
 
@@ -126,7 +153,7 @@ For the item-centred instance (service time 4 s):
 
 The station-centred instance (arrival every 5 s, service 4 s) never queues.
 
-The tests also run both translations on simultaneous arrivals and on Poisson
+The tests also run every translation on simultaneous arrivals and on Poisson
 arrivals, and check the mean wait over 200,000 arrivals against the
 Pollaczek–Khinchine value for M/D/1 (λ = 0.2/s, S = 4 s, ρ = 0.8,
 W<sub>q</sub> = 8 s).
@@ -154,25 +181,43 @@ Points of semantics an executor has to get right for these models:
   change trigger in the other.
 - In model 02, `accept Grant` inside an item's route must receive the
   `Grant` the server sends to that item.
+- In model 03, a vertex and the evaluation of its outgoing conditions happen
+  as one step, and an edge with no delay completes in that same step, before
+  any other event at the same instant. Otherwise two simultaneous arrivals
+  both see the server free and start it twice; a test demonstrates this.
 
-## The gap
+## The fix
 
-A declarative event graph written on the part, with conditional scheduling
-edges between its events, still has no first-class home in SysML v2. The
-state machine above is the operational equivalent, not the same thing.
+What remains missing is the notation: Wagner's original text, with the
+guarded successions written directly in the part body. Model 03 already
+shows the meaning that text should have. So the proposal has two parts.
 
-Two directions worth raising with the SysML v2 RTF (for discussion, not
-settled here):
+**1. Execution rules (no language change; an executor can adopt them now).**
 
-1. allow guarded successions between event occurrences in part (occurrence)
-   bodies, with the same meaning they have in actions;
-2. a standard library for DES primitives (resources, queues with a defined
-   discipline, scheduled events with delays and conditions) whose semantics
-   are given in KerML, so item-centred models do not depend on each tool's
-   own definition of a queue.
+- A vertex (an action between delays) and the evaluation of the guards on
+  its outgoing successions are atomic.
+- Control flow with no `accept` completes in the same step as its source, so
+  zero-delay edges fire before any other event at that instant (Schruben's
+  priority rule).
+- `accept when` fires on a false-to-true change.
+- A sub-action reached through a `merge` may be performed repeatedly within
+  one performance of its owning action.
 
-Either way, a condition should not live in a metadata annotation: a
-condition in an annotation means whatever one simulator decides it means.
+The hand translations in `reference/` follow these rules, and a test shows
+what breaks when the zero-delay rule is dropped.
+
+**2. Language change (for the SysML v2 RTF).** Allow guarded successions,
+and the control nodes they need, in the bodies of occurrence definitions and
+usages (parts included). Define them as notation: the behavioural members of
+such a body (its actions, control nodes and successions) are the body of an
+implicit `perform action`, exactly as model 03 writes by hand. This adds
+grammar and one mapping rule, but no new semantics, because the result is
+an ordinary performed action whose transitions already belong in
+`Action::transitions`. An alternative is to give `Occurrence` its own
+`transitions` feature, but that means new library semantics.
+
+A condition should not live in a metadata annotation: a condition in an
+annotation means whatever one simulator decides it means.
 
 ## Running the checks
 
@@ -191,7 +236,7 @@ python reference/known_answers.py             # print the tables
 Issues and PRs are welcome, especially:
 
 - execution traces from any SysML v2 executor;
-- Wagner's full event graph written in either form;
+- Wagner's full event graph, in any of the three forms;
 - further patterns: branching, rework loops, batching, multiple servers.
 
 ## License

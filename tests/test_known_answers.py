@@ -1,4 +1,4 @@
-"""Both formulations must agree with Lindley's recursion, and with the
+"""All three formulations must agree with Lindley's recursion, and with the
 Pollaczek-Khinchine mean for M/D/1 over a long run. Run: python -m pytest"""
 
 import random
@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "reference"))
 
 from known_answers import (  # noqa: E402
+    event_graph,
     item_centred,
     lindley,
     pollaczek_khinchine_md1,
@@ -38,7 +39,7 @@ SCENARIOS = {
 
 
 @pytest.mark.parametrize("name", SCENARIOS)
-@pytest.mark.parametrize("model", [station_centred, item_centred])
+@pytest.mark.parametrize("model", [station_centred, item_centred, event_graph])
 def test_matches_lindley(name, model):
     arrivals = SCENARIOS[name]
     expected = lindley(arrivals, SERVICE)
@@ -57,10 +58,18 @@ def test_periodic_instance_never_queues():
     assert all(w == 0.0 for w in lindley(arrivals, SERVICE))
 
 
-@pytest.mark.parametrize("model", [station_centred, item_centred])
+@pytest.mark.parametrize("model", [station_centred, item_centred, event_graph])
 def test_md1_mean_wait_matches_pollaczek_khinchine(model):
     # lambda = 0.2 /s, S = 4 s, rho = 0.8 -> Wq = 8 s
     arrivals = _random_arrivals(200_000, 5.0, seed=7)
     waits = waits_from_starts(arrivals, model(arrivals, SERVICE))
     mean = sum(waits) / len(waits)
     assert mean == pytest.approx(pollaczek_khinchine_md1(0.2, SERVICE), rel=0.05)
+
+
+def test_zero_delay_edges_must_not_be_deferred():
+    """The execution rule matters: queue a zero-delay edge behind other
+    same-time events and simultaneous arrivals start the server twice."""
+    arrivals = [0.0, 0.0, 0.0]
+    assert event_graph(arrivals, SERVICE) == [0.0, 4.0, 8.0]
+    assert event_graph(arrivals, SERVICE, defer_zero_delay=True)[:2] == [0.0, 0.0]
