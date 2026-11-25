@@ -1,0 +1,27 @@
+name: check
+on:
+  push:
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install zstandard pytest
+      - uses: actions/cache@v4
+        with:
+          path: .pilot
+          key: sysml-pilot-0.63.1
+      - name: Validate models with the OMG pilot (strict)
+        run: |
+          export SYSML_PILOT="$(tools/get-pilot.sh)"
+          tools/validate.sh
+      - name: Known-answer tests
+        run: python -m pytest -q
